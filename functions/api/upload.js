@@ -2,7 +2,6 @@ export async function onRequestPost(context) {
     const { request, env } = context;
     const contentType = request.headers.get('content-type') || '';
 
-    // ---- R2 Account configs from env vars ----
     const r2Accounts = [
         {
             name: "R2_1",
@@ -21,7 +20,7 @@ export async function onRequestPost(context) {
     ];
 
     try {
-        // ===================== JSON body = Remote URL upload =====================
+        // ===================== JSON body = Remote URL upload (STREAMING) =====================
         if (contentType.includes('application/json')) {
             const { url, filename } = await request.json();
 
@@ -50,19 +49,36 @@ export async function onRequestPost(context) {
                         return;
                     }
 
-                    await send({ status: "ဖိုင်ဒေတာ ဖတ်နေသည်...", progress: 15 });
-                    const fileBuffer = await remote.arrayBuffer();
                     const mime = remote.headers.get('content-type') || 'application/octet-stream';
 
-                    await send({ status: "R2 #1 သို့ တင်နေသည်...", progress: 30 });
+                    if (!remote.body) {
+                        await send({ error: "Remote response has no body stream" });
+                        await writer.close();
+                        return;
+                    }
 
-                    // Upload to R2 #1
-                    await uploadToR2(r2Accounts[0], filename, fileBuffer, mime);
-                    await send({ status: "R2 #2 သို့ တင်နေသည်...", progress: 65 });
+                    // Stream ကို tee() နဲ့ နှစ်ခွပြီး R2 နှစ်ခုဆီ တစ်ပြိုင်နက်ပို့မယ်
+                    const [stream1, stream2] = remote.body.tee();
 
-                    // Upload to R2 #2
-                    await uploadToR2(r2Accounts[1], filename, fileBuffer, mime);
-                    await send({ status: "Complete!", progress: 100, done: true });
+                    await send({ status: "R2 #1 & #2 သို့ streaming တင်နေသည်...", progress: 20 });
+
+                    // R2 နှစ်ခုကို တစ်ပြိုင်နက် streaming upload
+                    const results = await Promise.allSettled([
+                        streamUploadToR2(r2Accounts[0], filename, stream1, mime, cl || undefined),
+                        streamUploadToR2(r2Accounts[1], filename, stream2, mime, cl || undefined),
+                    ]);
+
+                    const errors = results
+                        .filter(r => r.status === 'rejected')
+                        .map(r => r.reason.message);
+
+                    if (errors.length === 2) {
+                        await send({ error: `R2 နှစ်ခုလုံး fail: ${errors.join(' | ')}` });
+                    } else if (errors.length === 1) {
+                        await send({ status: "Complete! (warning: one R2 failed)", progress: 100, done: true, warnings: errors });
+                    } else {
+                        await send({ status: "Complete!", progress: 100, done: true });
+                    }
 
                 } catch (err) {
                     await send({ error: err.message });
@@ -79,7 +95,7 @@ export async function onRequestPost(context) {
             });
         }
 
-        // ===================== FormData = Direct file upload =====================
+        // ===================== FormData = Direct file upload (STREAMING) =====================
         if (contentType.includes('multipart/form-data')) {
             const formData = await request.formData();
             const file = formData.get('file');
@@ -92,13 +108,15 @@ export async function onRequestPost(context) {
                 return jsonResp({ error: 'File exceeds 300MB' }, 400);
             }
 
-            const fileBuffer = await file.arrayBuffer();
             const mime = file.type || 'application/octet-stream';
+            const fileSize = file.size;
 
-            // Upload to both R2 accounts concurrently
+            // File ကို stream အဖြစ်ပြောင်းပြီး tee() နဲ့ နှစ်ခွ
+            const [stream1, stream2] = file.stream().tee();
+
             const results = await Promise.allSettled([
-                uploadToR2(r2Accounts[0], filename, fileBuffer, mime),
-                uploadToR2(r2Accounts[1], filename, fileBuffer, mime),
+                streamUploadToR2(r2Accounts[0], filename, stream1, mime, fileSize),
+                streamUploadToR2(r2Accounts[1], filename, stream2, mime, fileSize),
             ]);
 
             const errors = results
@@ -130,8 +148,8 @@ function jsonResp(data, status = 200) {
     });
 }
 
-// ===================== S3-compatible R2 Upload =====================
-async function uploadToR2(account, filename, body, contentType) {
+// ===================== Streaming R2 Upload (UNSIGNED-PAYLOAD) =====================
+async function streamUploadToR2(account, filename, bodyStream, contentType, contentLength) {
     const host = `${account.accountId}.r2.cloudflarestorage.com`;
     const url = `https://${host}/${account.bucketName}/${encodeURIComponent(filename)}`;
     const now = new Date();
@@ -140,7 +158,8 @@ async function uploadToR2(account, filename, body, contentType) {
     const region = 'auto';
     const service = 's3';
 
-    const payloadHash = await sha256Hex(body);
+    // Streaming ဖြစ်တဲ့အတွက် payload hash ကို UNSIGNED-PAYLOAD သုံးမယ်
+    const payloadHash = 'UNSIGNED-PAYLOAD';
 
     const canonicalHeaders =
         `content-type:${contentType}\n` +
@@ -153,7 +172,7 @@ async function uploadToR2(account, filename, body, contentType) {
     const canonicalRequest = [
         'PUT',
         `/${account.bucketName}/${encodeURIComponent(filename)}`,
-        '',               // query string
+        '',
         canonicalHeaders,
         signedHeaders,
         payloadHash
@@ -175,15 +194,24 @@ async function uploadToR2(account, filename, body, contentType) {
         `AWS4-HMAC-SHA256 Credential=${account.accessKeyId}/${credentialScope}, ` +
         `SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
+    const headers = {
+        'Content-Type': contentType,
+        'X-Amz-Content-Sha256': payloadHash,
+        'X-Amz-Date': amzDate,
+        'Authorization': authorization,
+    };
+
+    // content-length သိရင် ထည့်ပေးမယ် (R2 အတွက် ပိုကောင်းတယ်)
+    if (contentLength) {
+        headers['Content-Length'] = String(contentLength);
+    }
+
     const resp = await fetch(url, {
         method: 'PUT',
-        headers: {
-            'Content-Type': contentType,
-            'X-Amz-Content-Sha256': payloadHash,
-            'X-Amz-Date': amzDate,
-            'Authorization': authorization,
-        },
-        body: body
+        headers: headers,
+        // Stream ကို body အဖြစ် တိုက်ရိုက်ပေး - memory ထဲ buffer မလုပ်တော့
+        body: bodyStream,
+        duplex: 'half',
     });
 
     if (!resp.ok) {
