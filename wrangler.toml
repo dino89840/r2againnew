@@ -1,0 +1,5 @@
+name = "r2-uploader"
+compatibility_date = "2024-12-01"
+pages_build_output_dir = "./src"
+
+# R2 binding မလိုတော့ပါဘူး - API key နဲ့ပဲ ၂ခုလုံးတင်မယ်
