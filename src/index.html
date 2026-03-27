@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="my">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R2 Dual Uploader</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>📁 File Uploader</h1>
+        <p class="subtitle">Upload to Dual R2 Storage</p>
+
+        <!-- Upload Mode Tabs -->
+        <div class="tabs">
+            <button class="tab active" data-mode="file">📎 File Upload</button>
+            <button class="tab" data-mode="url">🔗 Remote URL</button>
+        </div>
+
+        <!-- File Upload Section -->
+        <div id="file-upload-section" class="upload-section active">
+            <div class="drop-zone" id="drop-zone">
+                <div class="drop-zone-icon">📂</div>
+                <p>ဖိုင်ကို ဒီမှာ ဆွဲချပါ (သို့) နှိပ်ပါ</p>
+                <p class="small">Max: 300MB</p>
+                <input type="file" id="file-input" hidden>
+            </div>
+        </div>
+
+        <!-- URL Upload Section -->
+        <div id="url-upload-section" class="upload-section">
+            <div class="url-input-group">
+                <input type="url" id="url-input" placeholder="https://example.com/file.mp4" />
+                <button id="url-upload-btn" class="btn-primary">Upload</button>
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div id="progress-section" class="hidden">
+            <div class="progress-info">
+                <span id="file-name-display"></span>
+                <span id="progress-percent">0%</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-details">
+                <span id="upload-speed"></span>
+                <span id="upload-status">Uploading...</span>
+            </div>
+        </div>
+
+        <!-- Result Section -->
+        <div id="result-section" class="hidden">
+            <h3>✅ Upload Complete!</h3>
+            <div class="link-group" id="link-group"></div>
+        </div>
+
+        <!-- History Section -->
+        <div class="history-section">
+            <h3>📋 Upload History</h3>
+            <div id="history-list" class="history-list">
+                <p class="empty-history">No uploads yet</p>
+            </div>
+            <button id="clear-history" class="btn-danger hidden">🗑️ Clear History</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
