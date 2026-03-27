@@ -1,0 +1,9 @@
+{
+  "name": "r2-uploader",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx wrangler pages dev ./src",
+    "deploy": "npx wrangler pages deploy ./src"
+  }
+}
